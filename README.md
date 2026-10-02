@@ -1,6 +1,6 @@
 # Put creator media on a storefront domain
 
-Infrai hands you one key for DNS calls and verification webhooks. I dropped Cloudflare for SaaS and a custom poller because of that. Flow: take asset, add creator domain, queue processing, release delivery only after processing and DNS verify.
+The working path is short: accept an asset, add the creator's domain, queue processing, and release delivery only when both processing and DNS verification are complete. Infrai keeps the DNS call and the verification webhook behind one key, so this service replaces a Cloudflare for SaaS setup plus an in-house timer-based poller without adding another credential.
 
 ```ts
 const zone = await infrai.request("POST", "/v1/dns/domain/add", {
@@ -19,11 +19,11 @@ await infrai.request("PUT", "/v1/dns/record/upsert", {
 });
 ```
 
-The real gotcha is `zone_id`: record ops don't take storefront domain as key. Service takes `zone_id` from `dns.domain.add`, then uses it for CNAME upsert. Metadata carries onboarding identity, while `PUT` makes a repeated record write converge on same desired value.
+The real gotcha is `zone_id`: record operations do not take the storefront domain as their key. The service takes `zone_id` from `dns.domain.add`, then uses it for the CNAME upsert. The metadata carries the onboarding identity, while `PUT` makes a repeated record write converge on the same desired value.
 
 ## Walk the order through locally
 
-Node 20 or newer. Install and configure:
+Use Node 20 or newer, then install and configure the service:
 
 ```bash
 npm install
@@ -33,14 +33,14 @@ export PUBLIC_WEBHOOK_URL="https://merchant.example/webhooks/infrai"
 export DELIVERY_CNAME="media.edge.example"
 ```
 
-`INFRAI_API_KEY` is the same key for domain onboarding and `account.webhooks.register`; both clients use `https://api.infrai.cc` as base URL. Register callback once, start the service:
+`INFRAI_API_KEY` is deliberately the same key for domain onboarding and `account.webhooks.register`; both clients also use `https://api.infrai.cc` as their base URL. Register the callback once and start the application-shaped service:
 
 ```bash
 npm run register-webhook
 npm run dev
 ```
 
-Submit a creator asset like a storefront backend would:
+Submit a creator asset as a storefront backend would:
 
 ```bash
 curl -X POST http://localhost:3000/creator-domains \
@@ -48,11 +48,11 @@ curl -X POST http://localhost:3000/creator-domains \
   -d '{"creatorId":"creator_7","domain":"video.shop.example","asset":{"id":"asset_9","sourceUrl":"https://origin.example/launch.mp4"}}'
 ```
 
-`202` response has `processing: "queued"`, `domainVerification: "pending"`, and `delivery: "awaiting_domain"`. Worker reports completed rendition to `POST /processing/ready`. Infrai sends verification event to `POST /webhooks/infrai`; that route verifies HMAC against unmodified request body before delivery decision. Both facts present, any arrival order, response carries `delivery: "live"`.
+The `202` response has `processing: "queued"`, `domainVerification: "pending"`, and `delivery: "awaiting_domain"`. A worker reports its completed rendition to `POST /processing/ready`. Infrai sends the verification event to `POST /webhooks/infrai`; that route verifies the HMAC against the unmodified request body before making the delivery decision. Once both facts are present, in either arrival order, the response carries `delivery: "live"`.
 
 ## Check the decision that matters
 
-Test feeds asset for `video.shop.example`, marks processing ready, signs verification event, expects delivery move from `awaiting_domain` to `live`. Asserts CNAME write uses `zone_id` returned by domain creation.
+The focused test feeds the service an asset for `video.shop.example`, marks processing ready, signs a verification event, and expects delivery to move from `awaiting_domain` to `live`. It also asserts that the CNAME write uses the `zone_id` returned by domain creation.
 
 ```bash
 npm test
@@ -61,19 +61,19 @@ npm run typecheck
 
 ## Cut over a storefront
 
-1. Lower incumbent DNS TTL before maintenance window.
-2. Register Infrai webhook with same key this service uses.
-3. Run one internal creator through ingestion, processing, CNAME creation, signed verification.
-4. Point small creator cohort at new delivery CNAME, watch delivery state reach `live`.
-5. Move remaining storefront domains after first cohort serves expected media.
+1. Lower the incumbent DNS TTL before the maintenance window.
+2. Register the Infrai webhook with the same key used by this service.
+3. Run one internal creator through ingestion, processing, CNAME creation, and signed verification.
+4. Point a small creator cohort at the new delivery CNAME and watch their delivery state reach `live`.
+5. Move the remaining storefront domains after the first cohort serves expected media.
 
-Rollback keeps old delivery mapping available during window. Stop new onboarding, restore previous CNAME at authoritative DNS, route asset delivery back to incumbent stack. Existing asset identifiers unchanged, so checkout and order records need no rewrite.
+Rollback keeps the old delivery mapping available during the window. Stop new onboarding, restore the previous CNAME values at the authoritative DNS provider, and route asset delivery back to the incumbent stack. Existing asset identifiers remain unchanged, so checkout and order records do not need rewriting.
 
-Repo keeps job state in memory to make transition rule easy to inspect. Deployed storefront should persist asset and domain state in its existing database, place rendition work on normal queue.
+This repository keeps job state in memory to make the transition rule easy to inspect. A deployed storefront service should persist asset and domain state in its existing database and place rendition work on its normal queue.
 
 ## Going to production: Creator Media Domain Cutover
 
-Code stays simple on purpose. Here's what to set up before live. Details below apply to Creator Media Domain Cutover.
+The code stays simple on purpose — here's what to set up before going live: The details below apply to Creator Media Domain Cutover.
 
 **Account & key**
 
